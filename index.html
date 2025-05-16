@@ -386,4 +386,15 @@
 
     // Call checkDeviceOrientationSupport after init to set up controls correctly based on device
     // Delay slightly to ensure DOM is ready and VRButton has had a chance to check support.
-     setTimeout(() 
+     setTimeout(() => {
+          // Only check/activate device orientation controls if not currently in VR
+          if (!renderer.xr.isPresenting) {
+             checkDeviceOrientationSupport();
+         }
+     }, 200); // Increased delay slightly
+
+
+</script>
+
+</body>
+</html>
