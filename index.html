@@ -1,19 +1,17 @@
-<!-- Path: interactive-guilloche-vr/guilloche_kaleidoscope_360.html -->
 <!DOCTYPE html>
-<html lang="en">
+<html>
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-    <title>Immersive 360° Guilloche Kaleidoscope - Production Ready</title>
-    <meta name="description" content="Production-ready guilloche pattern with kaleidoscopic symmetry in a 360° view, featuring robust VR, Orbit, and Mobile Tilt controls.">
+    <title>Immersive 360° Guilloche Kaleidoscope</title>
+    <meta name="description" content="Adapted guilloche pattern with kaleidoscopic symmetry in a 360° view, VR support, and default mobile tilt.">
     <style>
         body { margin: 0; padding: 0; overflow: hidden; background-color: #000000; color: #ffffff; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
         #container { position: fixed; top: 0; left: 0; width: 100%; height: 100%; }
         #info { position: absolute; top: 10px; width: 100%; text-align: center; z-index: 100; display: block; background-color: rgba(0,0,0,0.5); padding: 5px 0; font-size: 12px; }
-        /* VR button will be styled by Three.js, but we can add a default position */
-        #vr-button-container { position: absolute; bottom: 20px; right: 20px; z-index: 101; }
-        #permission-button { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); padding: 15px 25px; z-index: 102; background-color: #4CAF50; color: #fff; border: none; border-radius: 5px; cursor: pointer; font-size: 16px; display: none; box-shadow: 0 2px 5px rgba(0,0,0,0.2); }
-        #permission-button:hover { background-color: #45a049; }
+        #vr-button { position: absolute; bottom: 20px; right: 20px; z-index: 101; padding: 12px 24px; background-color: #333; color: #fff; border: 1px solid #fff; border-radius: 4px; cursor: pointer; font-size: 16px; display: none; }
+        #vr-button:hover { background-color: #555; }
+        #permission-button { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); padding: 15px; z-index: 102; background-color: #444; color: #fff; border: 1px solid #fff; border-radius: 5px; cursor: pointer; display: none; }
         a { color: #0af; }
     </style>
     <script async src="https://unpkg.com/es-module-shims@1.8.0/dist/es-module-shims.js"></script>
@@ -27,312 +25,374 @@
     </script>
 </head>
 <body>
-    <div id="container"></div>
-    <div id="info">
-        Immersive 360° Guilloche Kaleidoscope by UnLovable<br/>
-        Look around (Desktop: Mouse Drag, Mobile: Tilt Device, VR: Headset)
-    </div>
-    <div id="vr-button-container"></div>
-    <button id="permission-button">Enable Motion Control</button>
 
-    <script type="module">
-        import * as THREE from 'three';
-        import { VRButton } from 'three/addons/webxr/VRButton.js';
-        import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+<div id="container"></div>
+<div id="info">
+    Immersive 360° Guilloche Kaleidoscope by UnLovable
+    Look around (Desktop: Mouse Drag, Mobile: Tilt Device, VR: Headset)
+</div>
+<button id="vr-button">Enter VR</button>
+<button id="permission-button">Enable Motion Control</button>
 
-        let scene, camera, renderer;
-        let orbitControls = null;
-        let sphereMesh;
-        let shaderMaterial;
-        let time = 0;
+<script type="module">
+    import * as THREE from 'three';
+    import { VRButton } from 'three/addons/webxr/VRButton.js';
+    import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 
-        let deviceOrientationListenerAdded = false;
-        let initialDeviceOrientation = null; // Stores {alpha, beta, gamma} of first valid reading
-        let currentDeviceQuaternion = new THREE.Quaternion(); // Stores the current device orientation
+    let scene, camera, renderer;
+    let controls = null; // Can be OrbitControls or null if device orientation is active
+    let sphereMesh;
+    let shaderMaterial;
+    let time = 0; // This will increment by 0.016 per frame as in your original code
+    let deviceOrientationControlsActive = false;
+    let initialDeviceOrientation = null;
+    let deviceOrientationListenerAdded = false;
 
-        // Control State Management
-        const ControlType = { NONE: 0, ORBIT: 1, DEVICE_ORIENTATION: 2, VR: 3 };
-        let activeControlType = ControlType.NONE;
+    const uniforms = {
+        u_time: { value: 0.0 },
+        u_resolution: { value: new THREE.Vector2(window.innerWidth, window.innerHeight) },
+        u_kaleidoscope_sectors: { value: 12.0 },
+        u_pattern_scale: { value: 1.0 }
+    };
 
-        const uniforms = {
-            u_time: { value: 0.0 },
-            u_resolution: { value: new THREE.Vector2(window.innerWidth, window.innerHeight) },
-            u_kaleidoscope_sectors: { value: 12.0 },
-            u_pattern_scale: { value: 1.0 }
-        };
+    const vertexShader = `
+        varying vec2 vUv;
+        void main() {
+            vUv = uv;
+            // Corrected underscore typos to multiplication signs
+            gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+        }
+    `;
 
-        const vertexShader = `
-            varying vec2 vUv;
-            void main() {
-                vUv = uv;
-                gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-            }
-        `;
+    const fragmentShader = `
+        precision highp float;
+        uniform float u_time; // Time uniform
+        uniform vec2 u_resolution; // Resolution uniform
+        uniform float u_kaleidoscope_sectors; // Custom uniform
+        uniform float u_pattern_scale; // Custom uniform
+        varying vec2 vUv; // Passed from vertex shader
 
-        const fragmentShader = `
-            uniform float u_time;
-            uniform vec2 u_resolution;
-            uniform float u_kaleidoscope_sectors;
-            uniform float u_pattern_scale;
-            varying vec2 vUv;
+        #define PI 3.14159265359
+        #define TWO_PI 6.28318530718
 
-            #define PI 3.14159265359
-            #define TWO_PI 6.28318530718
-
-            vec3 palette( float t ) {
-                vec3 a = vec3(0.5, 0.5, 0.5);
-                vec3 b = vec3(0.5, 0.5, 0.5);
-                vec3 c = vec3(1.0, 1.0, 1.0);
-                vec3 d = vec3(0.263, 0.416, 0.557);
-                return a + b*cos( TWO_PI*(c*t+d) );
-            }
-
-            void main() {
-                float lon = vUv.x * TWO_PI;
-                float lat = (vUv.y - 0.5) * PI;
-                float segment_angle = TWO_PI / u_kaleidoscope_sectors;
-                float segment_index = floor(lon / segment_angle);
-                lon = mod(lon, segment_angle);
-                if (mod(segment_index, 2.0) > 0.5) {
-                    lon = segment_angle - lon;
-                }
-                vec2 pattern_uv;
-                pattern_uv.x = (lon - segment_angle * 0.5) * u_pattern_scale;
-                pattern_uv.y = lat * u_pattern_scale;
-                float pattern_angle = atan(pattern_uv.y, pattern_uv.x);
-                float pattern_radius = length(pattern_uv);
-                float t = u_time * 0.1;
-                float pattern = 0.0;
-                pattern += sin(pattern_uv.x * 50.0 + t * 2.0) * sin(pattern_uv.y * 50.0 + t * 3.0) * 0.5;
-                pattern += sin(pattern_uv.x * 30.0 + t * 1.5) * cos(pattern_uv.y * 40.0 + t * 2.5) * 0.3;
-                pattern += cos(pattern_radius * 60.0 + t * 5.0) * 0.2;
-                pattern += sin(pattern_angle * u_kaleidoscope_sectors * 0.5 + t * 4.0) * 0.1;
-                pattern += sin(pattern_radius * 100.0 + pattern_angle * 20.0 + t * 6.0) * 0.1;
-                float colorMix = sin(pattern * 10.0 + t * 5.0);
-                vec3 finalColor = palette(colorMix * 0.5 + 0.5);
-                finalColor *= (1.0 + abs(pattern) * 0.5);
-                gl_FragColor = vec4(finalColor, 1.0);
-            }
-        `;
-
-        init();
-        animate();
-
-        function init() {
-            scene = new THREE.Scene();
-            camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
-            // Camera is at origin, looking into the sphere. Sphere is large.
-            // We don't move camera.position; we rotate it.
-            camera.position.set(0,0,0.01); // Slightly off origin to ensure it's "inside"
-
-            renderer = new THREE.WebGLRenderer({ antialias: true });
-            renderer.setPixelRatio(window.devicePixelRatio);
-            renderer.setSize(window.innerWidth, window.innerHeight);
-            renderer.xr.enabled = true;
-            document.getElementById('container').appendChild(renderer.domElement);
-
-            const sphereGeometry = new THREE.SphereGeometry(500, 128, 64);
-            shaderMaterial = new THREE.ShaderMaterial({
-                uniforms: uniforms,
-                vertexShader: vertexShader,
-                fragmentShader: fragmentShader,
-                side: THREE.BackSide
-            });
-            sphereMesh = new THREE.Mesh(sphereGeometry, shaderMaterial);
-            scene.add(sphereMesh);
-
-            setupVRButton();
-            initializeControls(); // Sets initial control scheme
-
-            window.addEventListener('resize', onWindowResize, false);
+        // Palette function from the provided snippet
+        vec3 palette( float t ) {
+            vec3 a = vec3(0.5, 0.5, 0.5);
+            vec3 b = vec3(0.5, 0.5, 0.5);
+            vec3 c = vec3(1.0, 1.0, 1.0);
+            vec3 d = vec3(0.263, 0.416, 0.557);
+            return a + b*cos( TWO_PI*(c*t+d) );
         }
 
-        function setupVRButton() {
-            const vrButtonContainer = document.getElementById('vr-button-container');
-            const vrButton = VRButton.createButton(renderer);
-            vrButtonContainer.appendChild(vrButton); // Add VR button to its designated container
+        void main() {
+            // Map Sphere UVs (vUv) to polar coordinates for 360 mapping
+            float lon = vUv.x * TWO_PI; // Longitude maps to angle (0 to 2*PI)
+            float lat = (vUv.y - 0.5) * PI; // Latitude maps to radius (approx -PI/2 to PI/2, adjust range for zoom)
 
-            // VR session lifecycle managed by renderer.xr events
-            renderer.xr.addEventListener('sessionstart', () => {
-                console.log("VR Session Started");
-                enableControls(ControlType.VR);
-            });
-            renderer.xr.addEventListener('sessionend', () => {
-                console.log("VR Session Ended");
-                // Revert to appropriate non-VR controls
-                initializeControls(); 
-            });
-        }
-        
-        function initializeControls() {
-            if (renderer.xr.isPresenting) {
-                enableControls(ControlType.VR);
-                return;
+            // --- Apply Kaleidoscope Symmetry ---
+            float segment_angle = TWO_PI / u_kaleidoscope_sectors;
+            float segment_index = floor(lon / segment_angle);
+            float angle_in_segment = mod(lon, segment_angle); // Angle within the current segment
+
+            // Reflect angle for alternating segments
+            if (mod(segment_index, 2.0) > 0.5) {
+                angle_in_segment = segment_angle - angle_in_segment;
             }
 
-            // Default to OrbitControls, then check for device orientation
-            enableControls(ControlType.ORBIT);
-            checkDeviceOrientationSupport();
+            // Map the segment angle and latitude to Cartesian pattern UVs, as in your original snippet
+            vec2 pattern_uv;
+            // Corrected underscore typos to multiplication signs
+            pattern_uv.x = (angle_in_segment - segment_angle * 0.5) * u_pattern_scale;
+            pattern_uv.y = lat * u_pattern_scale;
+
+            // Calculate polar coordinates from the Cartesian pattern_uv for some pattern functions
+            float pattern_angle = atan(pattern_uv.y, pattern_uv.x);
+            float pattern_radius = length(pattern_uv);
+
+
+            // --- Generate Pattern ---
+            // Using the pattern calculation EXACTLY from your provided snippet, with syntax corrections
+            float t = u_time * 0.1; // Match original timing calculation
+
+            float pattern = 0.0;
+            // Corrected underscore typos to multiplication/addition signs
+            pattern += sin(pattern_uv.x * 50.0 + t * 2.0) * sin(pattern_uv.y * 50.0 + t * 3.0) * 0.5;
+            pattern += sin(pattern_uv.x * 30.0 + t * 1.5) * cos(pattern_uv.y * 40.0 + t * 2.5) * 0.3;
+            pattern += cos(pattern_radius * 60.0 + t * 5.0) * 0.2;
+            pattern += sin(pattern_angle * u_kaleidoscope_sectors * 0.5 + t * 4.0) * 0.1;
+            pattern += sin(pattern_radius * 100.0 + pattern_angle * 20.0 + t * 6.0) * 0.1;
+
+
+            // --- Coloring ---
+            // Using the coloring logic EXACTLY from the provided snippet, with syntax correction
+            float colorMix = sin(pattern * 10.0 + t * 5.0);
+            vec3 finalColor = palette(colorMix * 0.5 + 0.5);
+
+            // Apply pattern brightness/contrast - Corrected syntax
+            finalColor *= (1.0 + abs(pattern) * 0.5);
+
+            gl_FragColor = vec4(finalColor, 1.0);
         }
+    `;
 
-        function enableControls(type) {
-            // Disable all first
-            if (orbitControls) orbitControls.enabled = false;
-            // No explicit "disable" for device orientation, just stop using its quaternion
-            // VR is handled by renderer.xr
+    init();
+    animate();
 
-            activeControlType = type;
-            console.log("Active control type:", Object.keys(ControlType).find(key => ControlType[key] === type));
+    function init() {
+        scene = new THREE.Scene();
+        camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+        camera.position.z = 0.1; // Camera inside the sphere
 
-            switch (type) {
-                case ControlType.ORBIT:
-                    if (!orbitControls) {
-                        orbitControls = new OrbitControls(camera, renderer.domElement);
-                        orbitControls.enableDamping = true;
-                        orbitControls.dampingFactor = 0.05;
-                        orbitControls.enablePan = false;
-                        orbitControls.enableZoom = false;
-                        orbitControls.rotateSpeed = -0.25; // Negative for natural swipe on sphere interior
-                        orbitControls.minDistance = 0; 
-                        orbitControls.maxDistance = 0.1; // Effectively locks zoom
-                    }
-                    orbitControls.enabled = true;
-                    break;
-                case ControlType.DEVICE_ORIENTATION:
-                    // OrbitControls must be disabled for device orientation to work without conflict
-                    if (orbitControls) orbitControls.enabled = false;
-                    initialDeviceOrientation = null; // Reset for calibration
-                    // The handleDeviceOrientation listener will now apply updates
-                    break;
-                case ControlType.VR:
-                    if (orbitControls) orbitControls.enabled = false;
-                    // VR controls are managed by the WebXRManager internally
-                    break;
-                case ControlType.NONE:
-                     // All controls are off
-                    break;
+        renderer = new THREE.WebGLRenderer({ antialias: true }); // Keep antialias for definition
+        renderer.setPixelRatio(window.devicePixelRatio);
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.xr.enabled = true; // Enable WebXR
+
+        document.getElementById('container').appendChild(renderer.domElement);
+
+        const sphereGeometry = new THREE.SphereGeometry(500, 128, 64); // Large sphere
+        shaderMaterial = new THREE.ShaderMaterial({
+            uniforms: uniforms,
+            vertexShader: vertexShader,
+            fragmentShader: fragmentShader,
+            side: THREE.BackSide // Render the inside of the sphere
+        });
+
+        sphereMesh = new THREE.Mesh(sphereGeometry, shaderMaterial);
+        scene.add(sphereMesh);
+
+        // Initial controls setup: OrbitControls first, then check for device orientation
+        activateOrbitControls();
+
+        const vrButtonElement = document.getElementById('vr-button');
+        vrButtonElement.style.display = 'none'; // Hide the placeholder button
+
+        // Use Three.js's VRButton helper, which handles button creation and visibility
+        const vrButton = VRButton.createButton(renderer, {
+            onSessionStart: () => {
+                deviceOrientationControlsActive = false; // Disable device orientation in VR
+                initialDeviceOrientation = null; // Reset calibration
+                 if (controls instanceof OrbitControls && controls.enabled) { // Ensure orbit controls are disabled in VR
+                     controls.enabled = false;
+                 }
+            },
+            onSessionEnd: () => {
+                // When exiting VR, re-evaluate controls: Orbit first, then device orientation
+                activateOrbitControls();
+                checkDeviceOrientationSupport();
+            },
+             onUnsupported: () => {
+                // Handle unsupported VR by potentially showing a message or fallback UI
+                // The VRButton itself might update its text or become disabled
+                 console.warn("VR not supported on this browser/device.");
+                 // Fallback to checking device orientation if VR is not supported
+                 checkDeviceOrientationSupport();
+            },
+             onSupported: (button) => {
+                 // The VRButton.createButton function returns the button element it creates
+                 // We can append this button to the body or another container if needed,
+                 // but typically VRButton handles appending itself.
+                 // The button's display property is managed by VRButton based on VR availability.
+                 // Ensure our placeholder #vr-button stays hidden if VRButton created its own.
+                 vrButtonElement.style.display = 'none'; // Keep our placeholder hidden
+                 // The VRButton itself will be displayed if supported
+                 console.info("VR supported. VR button should be visible.");
+                 // Check for device orientation support regardless of VR support
+                 checkDeviceOrientationSupport();
             }
-        }
+        });
+
+         // Append the button created by VRButton.createButton to the body
+         // This button is managed by VRButton and will appear/disappear based on VR state.
+        document.body.appendChild(vrButton);
 
 
-        function checkDeviceOrientationSupport() {
-            if (renderer.xr.isPresenting) return; // Don't interfere if in VR
+        window.addEventListener('resize', onWindowResize, false);
+    }
 
-            const permissionButton = document.getElementById('permission-button');
-            permissionButton.style.display = 'none'; // Hide by default
+    function checkDeviceOrientationSupport() {
+        const permissionButton = document.getElementById('permission-button');
+        permissionButton.style.display = 'none'; // Hide by default
 
-            if (window.DeviceOrientationEvent) {
-                if (typeof DeviceOrientationEvent.requestPermission === 'function') {
-                    // iOS 13+
-                    DeviceOrientationEvent.requestPermission()
-                        .then(response => {
-                            if (response === 'granted') {
-                                if (!deviceOrientationListenerAdded) {
-                                    window.addEventListener('deviceorientation', handleDeviceOrientation, true);
-                                    deviceOrientationListenerAdded = true;
-                                }
-                                // If permission granted, attempt to switch to device orientation
-                                // This needs to be explicit, as OrbitControls might be active.
-                                enableControls(ControlType.DEVICE_ORIENTATION);
-                            } else {
-                                console.log("Device orientation permission not granted.");
-                                // Fallback or ensure OrbitControls remain if DEVICE_ORIENTATION was not activated
-                                if (activeControlType !== ControlType.ORBIT) enableControls(ControlType.ORBIT);
-                            }
-                            permissionButton.style.display = 'none'; // Hide after attempt
-                        }).catch(error => {
-                            console.error("DeviceOrientationEvent.requestPermission error:", error);
-                            permissionButton.style.display = 'none';
-                            if (activeControlType !== ControlType.ORBIT) enableControls(ControlType.ORBIT);
-                        });
-                    // Show button to trigger permission prompt
+        // Check if DeviceOrientationEvent is available and we are NOT in VR
+        if (window.DeviceOrientationEvent && !renderer.xr.isPresenting) {
+            if (typeof DeviceOrientationEvent.requestPermission === 'function') {
+                // iOS 13+ requires explicit permission
+                // Check if permission has already been granted implicitly or explicitly
+                 if (DeviceOrientationEvent.requestPermission.permissionState === 'granted' ||
+                     (window.DeviceMotionEvent && typeof DeviceMotionEvent.requestPermission === 'function' && DeviceMotionEvent.requestPermission.permissionState === 'granted') // Check MotionEvent too for broader compatibility
+                     ) {
+                     // Permission already granted, activate controls immediately
+                     if (!deviceOrientationListenerAdded) {
+                         window.addEventListener('deviceorientation', handleDeviceOrientation, true);
+                         deviceOrientationListenerAdded = true;
+                     }
+                     activateDeviceOrientationControls();
+                 } else {
+                    // Permission not granted, show the button to request it
                     permissionButton.style.display = 'block';
-                } else {
-                    // Android or older iOS (permission is implicit or handled differently)
-                    if (!deviceOrientationListenerAdded) {
-                        window.addEventListener('deviceorientation', handleDeviceOrientation, true);
-                        deviceOrientationListenerAdded = true;
-                        console.log("Device orientation listener added (non-iOS13+ path).");
-                        // Do not switch controls yet; wait for the first event in handleDeviceOrientation
-                        // This ensures sensors are actually available.
-                    }
-                }
+                    permissionButton.onclick = () => {
+                        DeviceOrientationEvent.requestPermission()
+                            .then(response => {
+                                if (response === 'granted') {
+                                    if (!deviceOrientationListenerAdded) {
+                                        window.addEventListener('deviceorientation', handleDeviceOrientation, true);
+                                        deviceOrientationListenerAdded = true;
+                                    }
+                                    activateDeviceOrientationControls(); // Activate after grant
+                                } else {
+                                    // Permission denied, ensure OrbitControls are active if no other control
+                                    console.warn("Device orientation permission denied.");
+                                    if (!deviceOrientationControlsActive) activateOrbitControls();
+                                }
+                                permissionButton.style.display = 'none'; // Hide button after attempt
+                            }).catch(error => {
+                                console.error("DeviceOrientationEvent.requestPermission error:", error);
+                                permissionButton.style.display = 'none'; // Hide button on error
+                                if (!deviceOrientationControlsActive) activateOrbitControls();
+                            });
+                    };
+                 }
             } else {
-                console.log("DeviceOrientationEvent not supported.");
-                if (activeControlType !== ControlType.ORBIT) enableControls(ControlType.ORBIT);
-            }
-        }
-        
-        const SENSOR_FIX = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), -Math.PI / 2); // Correction for device coordinate system
-        const WORLD_FIX = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0,0,1), -Math.PI / 2); // Orient world Z to be user's forward
-
-        function handleDeviceOrientation(event) {
-            if (renderer.xr.isPresenting) return;
-
-            // If this is the first event and we are on a non-iOS13+ path, switch controls
-            if (activeControlType === ControlType.ORBIT && typeof DeviceOrientationEvent.requestPermission !== 'function') {
-                 // Check for valid event data before switching
-                if (event.alpha !== null || event.beta !== null || event.gamma !== null) {
-                    console.log("First valid device orientation event received, switching controls.");
-                    enableControls(ControlType.DEVICE_ORIENTATION);
-                } else {
-                    console.log("Device orientation event has null data, not switching yet.");
-                    return; // Wait for valid data
+                // Android or older iOS where permission is implicit or not needed via this API
+                if (!deviceOrientationListenerAdded) {
+                    window.addEventListener('deviceorientation', handleDeviceOrientation, true);
+                    deviceOrientationListenerAdded = true;
                 }
+                activateDeviceOrientationControls(); // Attempt to activate by default
             }
-            
-            // Only apply if device orientation is the active control method
-            if (activeControlType !== ControlType.DEVICE_ORIENTATION) return;
+        } else if (!renderer.xr.isPresenting) {
+            // No DeviceOrientationEvent support detected or in VR, ensure OrbitControls are active
+            console.info("Device orientation not supported or in VR. Using OrbitControls.");
+             if (!deviceOrientationControlsActive) activateOrbitControls();
+        }
+    }
 
-            const alpha = event.alpha ? THREE.MathUtils.degToRad(event.alpha) : 0; // Z
-            const beta = event.beta ? THREE.MathUtils.degToRad(event.beta) : 0;   // X
-            const gamma = event.gamma ? THREE.MathUtils.degToRad(event.gamma) : 0; // Y
 
-            if (event.alpha === null && event.beta === null && event.gamma === null) {
-                console.warn("Device orientation event has all null data.");
-                return;
-            }
-            
-            const deviceEuler = new THREE.Euler(beta, alpha, -gamma, 'YXZ'); // Standard order for device orientation
-            currentDeviceQuaternion.setFromEuler(deviceEuler);
-            currentDeviceQuaternion.multiply(SENSOR_FIX); // Apply sensor correction
-            currentDeviceQuaternion.multiply(WORLD_FIX); // Align to world
+    function activateOrbitControls() {
+        if (renderer.xr.isPresenting) return; // Don't activate orbit controls if in VR
+        deviceOrientationControlsActive = false;
+        initialDeviceOrientation = null; // Reset for potential future use
 
-            if (initialDeviceOrientation === null) {
-                // Capture the first fully processed orientation as the baseline
-                initialDeviceOrientation = currentDeviceQuaternion.clone().invert();
-                console.log("Initial device orientation captured.");
+        // Only create new OrbitControls if they don't exist or are disposed
+        if (!(controls instanceof OrbitControls) || (controls && !controls.enabled)) {
+            if (controls && typeof controls.dispose === 'function') {
+                controls.dispose(); // Dispose other types of controls if they exist
             }
-            
-            // Apply the relative orientation
-            if (initialDeviceOrientation) {
-                camera.quaternion.copy(initialDeviceOrientation).multiply(currentDeviceQuaternion);
-            }
+            controls = new OrbitControls(camera, renderer.domElement);
+            controls.enableDamping = true;
+            controls.dampingFactor = 0.05;
+            controls.enablePan = false;
+            controls.enableZoom = false;
+            controls.rotateSpeed = -0.25; // Negative for natural swipe on sphere interior
+            controls.minDistance = 0; // Stay inside sphere
+            controls.maxDistance = 1; // Stay inside sphere
+        }
+        // Ensure they are enabled
+        if (controls instanceof OrbitControls) {
+             controls.enabled = true;
+        }
+    }
+
+    function activateDeviceOrientationControls() {
+        if (renderer.xr.isPresenting) return; // Don't activate if in VR
+        if (controls instanceof OrbitControls) {
+            controls.enabled = false; // Disable OrbitControls
+             // controls.dispose(); // Optionally dispose fully if not switching back often
+             // controls = null; // Don't nullify if we might switch back
+        }
+        deviceOrientationControlsActive = true;
+        initialDeviceOrientation = null; // Reset for calibration
+        // No separate "DeviceOrientationControls" object needed, camera is manipulated directly
+        console.info("Device orientation controls activated.");
+    }
+
+
+    function handleDeviceOrientation(event) {
+        // Only apply if device orientation controls are active AND we are NOT in VR
+        if (!deviceOrientationControlsActive || renderer.xr.isPresenting) return;
+
+        // Sometimes initial events have null values, ignore them for calibration
+        if (event.alpha === null && event.beta === null && event.gamma === null) {
+             console.warn("Received null device orientation event.");
+            return;
         }
 
-        function onWindowResize() {
-            camera.aspect = window.innerWidth / window.innerHeight;
-            camera.updateProjectionMatrix();
-            renderer.setSize(window.innerWidth, window.innerHeight);
-            uniforms.u_resolution.value.set(window.innerWidth, window.innerHeight);
+        // Ensure controls are active if an event is received (might have been disabled by VR exit)
+        if (!deviceOrientationControlsActive) {
+             activateDeviceOrientationControls();
+             console.log("Re-activating device orientation controls on receiving event.");
         }
 
-        function animate() {
-            renderer.setAnimationLoop(render);
+
+        const alpha = event.alpha ? THREE.MathUtils.degToRad(event.alpha) : 0; // Compass heading (Z axis)
+        const beta = event.beta ? THREE.MathUtils.degToRad(event.beta) : 0;   // Front-back tilt (X axis)
+        const gamma = event.gamma ? THREE.MathUtils.degToRad(event.gamma) : 0; // Left-right tilt (Y axis)
+
+        // The order of rotations matters. 'YXZ' is common for device orientation.
+        // We need to apply rotations relative to the device's default orientation.
+        // This is a simplified approach; a dedicated DeviceOrientationControls class
+        // handles this more robustly, but we'll use the direct quaternion method
+        // for a closer match to how some simple examples might work.
+
+        // Create a quaternion from the device orientation Euler angles (YXZ order)
+        const deviceQuaternion = new THREE.Quaternion().setFromEuler(
+            new THREE.Euler(beta, alpha, -gamma, 'YXZ') // Negating gamma often corrects orientation
+        );
+
+        // Apply this quaternion to the camera
+        camera.quaternion.copy(deviceQuaternion);
+
+
+        // Optional: Calibration - store the first non-null alpha and apply an offset
+        // This allows the user to point the device forward to set the initial view direction.
+        // If initialDeviceOrientation is null, set it on the first valid event.
+        // Then, subtract this initial orientation's quaternion from subsequent orientations.
+        // This requires slightly more complex quaternion math (multiplying by inverse).
+        // For simplicity and closer match to basic examples, we'll skip explicit calibration here,
+        // but it's why dedicated controls are better for robust mobile VR.
+        // The original snippet didn't use explicit calibration either, just an initial null check.
+    }
+
+
+    function onWindowResize() {
+        camera.aspect = window.innerWidth / window.innerHeight;
+        camera.updateProjectionMatrix();
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        uniforms.u_resolution.value.set(window.innerWidth, window.innerHeight);
+    }
+
+    function animate() {
+        // Use renderer.setAnimationLoop for VR compatibility
+        renderer.setAnimationLoop(render);
+    }
+
+    function render() {
+        // Increment time by approximate frame duration (1/60th second)
+        // This matches the original snippet's time update logic
+        time += 0.016;
+        uniforms.u_time.value = time;
+
+        // Update controls if they are active (OrbitControls for desktop, DeviceOrientation handled by event listener)
+        if (controls instanceof OrbitControls && controls.enabled) {
+            controls.update(); // Required for damping
         }
+        // Device orientation applies directly to camera.quaternion in handleDeviceOrientation
 
-        function render() {
-            time += 0.016; 
-            uniforms.u_time.value = time;
+        renderer.render(scene, camera);
+    }
 
-            if (activeControlType === ControlType.ORBIT && orbitControls && orbitControls.enabled) {
-                orbitControls.update();
-            }
-            // For DEVICE_ORIENTATION, camera.quaternion is updated in handleDeviceOrientation
-            // For VR, camera is updated by WebXRManager
+    // Call checkDeviceOrientationSupport after init to set up controls correctly based on device
+    // Delay slightly to ensure DOM is ready and VRButton has had a chance to check support.
+     setTimeout(() => {
+          // Only check/activate device orientation controls if not currently in VR
+          if (!renderer.xr.isPresenting) {
+             checkDeviceOrientationSupport();
+         }
+     }, 200); // Increased delay slightly
 
-            renderer.render(scene, camera);
-        }
-    </script>
+
+</script>
+
 </body>
 </html>
