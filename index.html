@@ -49,39 +49,41 @@
     let deviceOrientationListenerAdded = false;
 
     const uniforms = {
-        u_time: { value: 0.0 },
+        u_time: { value: 0.0 }, // Uniform for pattern animation speed
         u_resolution: { value: new THREE.Vector2(window.innerWidth, window.innerHeight) },
         u_kaleidoscope_sectors: { value: 12.0 },
-        u_pattern_scale: { value: 1.0 }
+        u_pattern_scale: { value: 1.0 },
+        u_palette_time_offset: { value: 0.0 } // New uniform for slow color cycling
     };
 
     const vertexShader = `
         varying vec2 vUv;
         void main() {
             vUv = uv;
-            // Corrected underscore typos to multiplication signs
             gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
         }
     `;
 
     const fragmentShader = `
         precision highp float;
-        uniform float u_time; // Time uniform
+        uniform float u_time; // Time uniform for pattern
         uniform vec2 u_resolution; // Resolution uniform
         uniform float u_kaleidoscope_sectors; // Custom uniform
         uniform float u_pattern_scale; // Custom uniform
+        uniform float u_palette_time_offset; // New uniform for palette cycling
         varying vec2 vUv; // Passed from vertex shader
 
         #define PI 3.14159265359
         #define TWO_PI 6.28318530718
 
-        // Palette function from the provided snippet
+        // Palette function from the provided snippet, modified to use the new uniform
         vec3 palette( float t ) {
             vec3 a = vec3(0.5, 0.5, 0.5);
             vec3 b = vec3(0.5, 0.5, 0.5);
             vec3 c = vec3(1.0, 1.0, 1.0);
             vec3 d = vec3(0.263, 0.416, 0.557);
-            return a + b*cos( TWO_PI*(c*t+d) );
+            // Add the palette time offset to the input t
+            return a + b*cos( TWO_PI*(c*t+d + u_palette_time_offset) );
         }
 
         void main() {
@@ -99,9 +101,8 @@
                 angle_in_segment = segment_angle - angle_in_segment;
             }
 
-            // Map the segment angle and latitude to Cartesian pattern UVs, as in your original snippet
+            // Map the segment angle and latitude to Cartesian pattern UVs
             vec2 pattern_uv;
-            // Corrected underscore typos to multiplication signs
             pattern_uv.x = (angle_in_segment - segment_angle * 0.5) * u_pattern_scale;
             pattern_uv.y = lat * u_pattern_scale;
 
@@ -111,11 +112,10 @@
 
 
             // --- Generate Pattern ---
-            // Using the pattern calculation EXACTLY from your provided snippet, with syntax corrections
-            float t = u_time * 0.1; // Match original timing calculation
+            // Using the pattern calculation EXACTLY from your provided snippet
+            float t = u_time * 0.1; // Match original timing calculation for the pattern
 
             float pattern = 0.0;
-            // Corrected underscore typos to multiplication/addition signs
             pattern += sin(pattern_uv.x * 50.0 + t * 2.0) * sin(pattern_uv.y * 50.0 + t * 3.0) * 0.5;
             pattern += sin(pattern_uv.x * 30.0 + t * 1.5) * cos(pattern_uv.y * 40.0 + t * 2.5) * 0.3;
             pattern += cos(pattern_radius * 60.0 + t * 5.0) * 0.2;
@@ -124,11 +124,11 @@
 
 
             // --- Coloring ---
-            // Using the coloring logic EXACTLY from the provided snippet, with syntax correction
-            float colorMix = sin(pattern * 10.0 + t * 5.0);
-            vec3 finalColor = palette(colorMix * 0.5 + 0.5);
+            // Using the coloring logic EXACTLY from the provided snippet
+            float colorMix = sin(pattern * 10.0 + t * 5.0); // This 't' is for pattern color mixing
+            vec3 finalColor = palette(colorMix * 0.5 + 0.5); // Pass the pattern-based mix to the palette
 
-            // Apply pattern brightness/contrast - Corrected syntax
+            // Apply pattern brightness/contrast
             finalColor *= (1.0 + abs(pattern) * 0.5);
 
             gl_FragColor = vec4(finalColor, 1.0);
@@ -368,10 +368,12 @@
     }
 
     function render() {
-        // Increment time by approximate frame duration (1/60th second)
-        // This matches the original snippet's time update logic
+        // Increment time for pattern animation (matches original snippet's speed)
         time += 0.016;
         uniforms.u_time.value = time;
+
+        // Increment palette time offset for slow color change
+        uniforms.u_palette_time_offset.value += 0.0005; // Adjust this value (e.g., 0.0001 for slower, 0.001 for faster)
 
         // Update controls if they are active (OrbitControls for desktop, DeviceOrientation handled by event listener)
         if (controls instanceof OrbitControls && controls.enabled) {
@@ -384,15 +386,4 @@
 
     // Call checkDeviceOrientationSupport after init to set up controls correctly based on device
     // Delay slightly to ensure DOM is ready and VRButton has had a chance to check support.
-     setTimeout(() => {
-          // Only check/activate device orientation controls if not currently in VR
-          if (!renderer.xr.isPresenting) {
-             checkDeviceOrientationSupport();
-         }
-     }, 200); // Increased delay slightly
-
-
-</script>
-
-</body>
-</html>
+     setTimeout(() 
